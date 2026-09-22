@@ -2,7 +2,8 @@
 """Fill the two approved DOCX files without rebuilding their formatting.
 
 Python >= 3.10, standard library only. No network, AI API, Word, or pip required.
-Extraction from the employee's PDF/text is performed by GPT before this script.
+Extraction from the employee's PDF/text is performed by the host LLM.
+The date-role helper is conservative and only handles explicit numeric anchors.
 This is a template-filling utility, not a legal-admissibility assessment.
 """
 from __future__ import annotations
@@ -25,7 +26,7 @@ MONTHS = ('', 'января', 'февраля', 'марта', 'апреля', '�
           'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря')
 FIELDS = (
     'court_name', 'court_address', 'court_instrumental', 'court_genitive',
-    'case_number', 'decision_date', 'awareness_date', 'filing_date',
+    'case_number', 'decision_date', 'legal_force_date', 'awareness_date', 'filing_date',
     'plaintiff_name', 'plaintiff_genitive', 'plaintiff_iin', 'plaintiff_bin',
     'plaintiff_address', 'defendant_name', 'defendant_dative', 'defendant_iin',
     'defendant_address', 'defendant_phone', 'defendant_email', 'amount', 'amount_words',
@@ -48,6 +49,50 @@ def parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
+
+DATE_TOKEN = r'(?<![0-9])(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})(?![0-9])'
+FORCE_LABEL = r'Дата\s+вступления\s+судебного\s+акта\s+в\s+законную\s+силу'
+DECISION_LABEL = r'Дата\s+вынесения\s+(?:решения|судебного\s+акта)'
+DECISION_CONTEXT = r'рассмотрев\s+гражданское\s+дело'
+DATE_BOUNDARY = r'(?:' + FORCE_LABEL + '|' + DECISION_LABEL + r'|Дата\s+выдачи|вступил[оа]?\s+в\s+законную\s+силу|' + DECISION_CONTEXT + ')'
+
+
+def extract_date_roles(text: str) -> tuple[dict[str, str], list[str]]:
+    """Read only explicit date roles; never choose the first/latest page date.
+
+    This is not PDF/OCR or a universal judicial-act parser. The host supplies
+    source_text verbatim from the chosen act, never a whole bundle of cases.
+    Ambiguous dates are blocked rather than guessed. Other date spellings must
+    be read by the host LLM with source provenance.
+    """
+    if not isinstance(text, str) or len(text) > 2_000_000:
+        raise ValueError('source_text must be a string of at most 2000000 characters')
+    candidates = {'decision_date': [], 'legal_force_date': []}
+    for key, label in (('decision_date', DECISION_LABEL), ('legal_force_date', FORCE_LABEL)):
+        for m in re.finditer(label + r'\s*[:\-–]?\s*(' + DATE_TOKEN + ')', text, re.I):
+            candidates[key].append(m.group(1))
+    for m in re.finditer(DECISION_CONTEXT, text, re.I):
+        window = re.split(DATE_BOUNDARY, text[m.end():m.end()+1200], maxsplit=1, flags=re.I)[0]
+        candidates['decision_date'].extend(re.findall(DATE_TOKEN, window))
+    found, blocked = {}, []
+    for key, items in candidates.items():
+        normalized = set()
+        invalid = False
+        for value in items:
+            try:
+                if '.' in value:
+                    day, month, year = value.split('.')
+                    value = f'{year}-{month}-{day}'
+                normalized.add(parse_date(value).isoformat())
+            except ValueError:
+                invalid = True
+        if invalid or len(normalized) > 1:
+            blocked.append(key)
+        elif len(normalized) == 1:
+            found[key] = normalized.pop()
+    return found, blocked
+
+
 def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
     """Normalize types without guessing absent values, dates, or identifiers."""
     if not isinstance(case, dict):
@@ -55,11 +100,30 @@ def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
     data = case.get('data', {})
     if not isinstance(data, dict):
         raise ValueError('data must be an object')
+    data = dict(data)
+    sources = case.get('sources', {})
+    if not isinstance(sources, dict):
+        raise ValueError('sources must be an object')
+    sources = dict(sources)
     notes: list[str] = []
-    blocked = case.get('uncertain_fields', []) + case.get('conflicted_fields', [])
-    if not isinstance(blocked, list) or any(not isinstance(x, str) for x in blocked):
-        raise ValueError('uncertain_fields/conflicted_fields must be arrays of strings')
-    blocked = set(blocked)
+    blocked = set()
+    for list_key in ('uncertain_fields', 'conflicted_fields'):
+        items = case.get(list_key, [])
+        if not isinstance(items, list) or any(not isinstance(x, str) for x in items):
+            raise ValueError('uncertain_fields/conflicted_fields must be arrays of strings')
+        blocked.update(items)
+    if 'source_text' in case:
+        detected, ambiguous = extract_date_roles(case['source_text'])
+        blocked.update(ambiguous)
+        for key in ambiguous:
+            notes.append('AMBIGUOUS_DATE_ROLE:' + key)
+        for key, value in detected.items():
+            if data.get(key) not in (None, '', value):
+                blocked.add(key)
+                notes.append('SOURCE_DATE_CONFLICT:' + key)
+            else:
+                data[key] = value
+                sources.setdefault(key, 'source_text:explicit_date_role:' + key)
     for key in sorted(blocked):
         notes.append('UNRESOLVED_FIELD:' + key)
     values: dict[str, str] = {}
@@ -82,6 +146,11 @@ def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
         if key.endswith(('_iin', '_bin')) and not re.fullmatch(r'[0-9]{12}', v):
             notes.append('INVALID_IDENTIFIER:' + key)
             continue
+        if key == 'case_number':
+            v = re.sub(r'^(?:№\s*)+', '', v)
+            if not v:
+                notes.append('INVALID_TEXT:case_number')
+                continue
         if key.endswith('_date'):
             try:
                 parse_date(v)
@@ -89,9 +158,6 @@ def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
                 notes.append('INVALID_DATE:' + key)
                 continue
         values[key] = v
-    sources = case.get('sources', {})
-    if not isinstance(sources, dict):
-        raise ValueError('sources must be an object')
     for key in values:
         if not isinstance(sources.get(key), str) or not sources[key].strip():
             notes.append('SOURCE_NOT_RECORDED:' + key)
@@ -107,10 +173,19 @@ def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
         if key in values and base not in values:
             values.pop(key)
             notes.append('MISSING_BASE_FIELD:' + key)
-    if values.get('plaintiff_bin') and not values.get('plaintiff_iin'):
-        notes.append('TEMPLATE_IIN_LABEL_NOT_BIN:plaintiff_iin')
+    if values.get('plaintiff_bin') and values.get('plaintiff_iin'):
+        notes.append('CONFLICT:plaintiff_identifier_type')
+    elif values.get('plaintiff_bin'):
+        values['plaintiff_identifier'] = values['plaintiff_bin']
+        values['plaintiff_identifier_label'] = 'БИН'
+    elif values.get('plaintiff_iin'):
+        values['plaintiff_identifier'] = values['plaintiff_iin']
+        values['plaintiff_identifier_label'] = 'ИИН'
+    optional = {'plaintiff_bin', 'legal_force_date', 'awareness_date'}
+    if values.get('plaintiff_bin'):
+        optional.add('plaintiff_iin')
     for key in FIELDS:
-        if key not in values and key != 'plaintiff_bin':
+        if key not in values and key not in optional:
             notes.append('MISSING:' + key)
     for prefix in ('decision', 'awareness', 'filing'):
         key = prefix + '_date'
@@ -158,6 +233,9 @@ def prepare_values(case: dict) -> tuple[dict[str, str], list[str]]:
     if 'filing_date' in values and 'awareness_date' in values:
         if values['filing_date'] < values['awareness_date']:
             notes.append('DATE_ORDER_CONFLICT:filing_before_awareness')
+    if 'decision_date' in values and 'legal_force_date' in values:
+        if values['legal_force_date'] < values['decision_date']:
+            notes.append('DATE_ORDER_CONFLICT:legal_force_before_decision')
     return values, sorted(set(notes))
 
 
@@ -219,7 +297,8 @@ def fill_one(source: Path, dest: Path, spec: dict, values: dict[str, str],
             if b > last_start.get(pi, len(text)):
                 raise ValueError('Overlapping replacement slots')
             last_start[pi] = a
-            value = values.get(slot['field'], slot['missing'])
+            # Locked slots are fixed manual-entry text, never client values.
+            value = slot['missing'] if slot.get('locked') else values.get(slot['field'], slot['missing'])
             if value != slot['original']:
                 replace_range(ns, indexes, current, a, b, value)
                 changed_slots += 1
@@ -246,7 +325,25 @@ def fill_one(source: Path, dest: Path, spec: dict, values: dict[str, str],
             if count != 1:
                 raise ValueError('Evidence paragraph numbering not found')
             xml = xml[:match.start()] + pxml + xml[match.end():]
-        ET.fromstring(xml)  # Fail before writing if a field produced invalid XML.
+        final_root = ET.fromstring(xml)
+        final_paragraphs = list(final_root.iter(W + 'p'))
+        for check in spec.get('manual_fragments', []):
+            paragraph = final_paragraphs[check['paragraph']]
+            text = ''.join(t.text or '' for t in paragraph.iter(W + 't'))
+            start = text.find(check['text'])
+            if start < 0 or text.count(check['text']) != 1:
+                raise ValueError('Manual notification fragment changed')
+            cursor = 0
+            for run in paragraph.iter(W + 'r'):
+                length = sum(len(t.text or '') for t in run.iter(W + 't'))
+                if max(start, cursor) < min(start + len(check['text']), cursor + length):
+                    props = run.find(W + 'rPr')
+                    italic = None if props is None else props.find(W + 'i')
+                    underline = None if props is None else props.find(W + 'u')
+                    if (italic is None or italic.get(W + 'val', 'true') not in ('1', 'true', 'on')
+                            or underline is None or underline.get(W + 'val', 'single') != 'single'):
+                        raise ValueError('Manual fragment must be italic and underlined')
+                cursor += length
         with ZipFile(dest, 'w') as zout:
             zout.comment = zin.comment
             for info in zin.infolist():
@@ -276,8 +373,11 @@ def generate_pair(case: dict, out_dir: Path, root: Path = ROOT) -> dict:
     draft = bool(notes)
     report = {
         'version': field_map['version'],
-        'status': 'DRAFT_INCOMPLETE_OR_UNCONFIRMED' if draft else 'FILLED_REQUIRES_FINAL_REVIEW',
+        'status': 'DRAFT_INCOMPLETE_OR_UNCONFIRMED' if draft else 'FILLED_REQUIRES_MANUAL_COMPLETION',
         'legal_correctness_certified': False,
+        'manual_completion_required': True,
+        'manual_fields': ['notification_date', 'notification_method'],
+        'date_roles': {key: values.get(key) for key in ('decision_date', 'legal_force_date')},
         'visual_review_required': True,
         'notes': notes, 'files': [],
     }
