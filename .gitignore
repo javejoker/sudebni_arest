@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+out*/
+output*/
+case.json
+client_*
+validation.json
+qa/
+*.log
+.DS_Store
