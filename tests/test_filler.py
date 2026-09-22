@@ -75,7 +75,7 @@ class FillerTests(unittest.TestCase):
     def test_01_pair(self):
         report, files = self.generate()
         self.assertEqual(len(files), 2)
-        self.assertEqual(report['status'], 'FILLED_REQUIRES_FINAL_REVIEW')
+        self.assertEqual(report['status'], 'FILLED_REQUIRES_MANUAL_COMPLETION')
         self.assertFalse(report['legal_correctness_certified'])
         self.assertTrue(all(f.exists() for f in files))
 
@@ -239,12 +239,14 @@ class FillerTests(unittest.TestCase):
             self.assertNotIn(self.case['data']['defendant_iin'], f.name)
             self.assertNotIn('Тестов', f.name)
 
-    def test_28_bin_not_written_under_iin(self):
+    def test_28_bin_written_under_bin_label(self):
         self.case['data'].pop('plaintiff_iin')
-        self.case['data']['plaintiff_bin'] = '000000000003'
+        self.case['data']['plaintiff_bin'] = '000000000009'
+        self.case['sources']['plaintiff_bin'] = 'SYNTHETIC'
         r, fs = self.generate()
-        self.assertIn('TEMPLATE_IIN_LABEL_NOT_BIN:plaintiff_iin', r['notes'])
-        self.assertTrue(all('000000000003' not in plain(f) for f in fs))
+        motion = next(f for f in fs if 'Ходатайство' in f.name)
+        self.assertIn('БИН:000000000009', plain(motion))
+        self.assertNotIn('ИИН:000000000009', plain(motion))
 
     def test_29_long_field_keeps_font_properties(self):
         self.case['data']['defendant_address'] = 'Очень длинный адрес ' * 30

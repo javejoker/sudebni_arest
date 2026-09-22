@@ -46,7 +46,7 @@ jobs:
               assert hashlib.sha256(data).hexdigest() == item['sha256'], item['path']
           print('MANIFEST_VERIFIED', len(manifest['entries']), 'files', os.environ['GITHUB_SHA'])
           PY
-      - name: Run 32 regression tests
+      - name: Run 54 regression and contract tests
         working-directory: checked-package
         run: python3 -m unittest discover -s tests -v
       - name: Generate both documents from synthetic data only
@@ -59,7 +59,9 @@ jobs:
           out = Path('out_ci')
           report = json.loads((out / 'validation.json').read_text(encoding='utf-8'))
           assert len(list(out.glob('*.docx'))) == 2
-          assert report['status'] == 'FILLED_REQUIRES_FINAL_REVIEW'
+          assert report['status'] == 'FILLED_REQUIRES_MANUAL_COMPLETION'
+          assert report['manual_completion_required'] is True
+          assert report['date_roles'] == {'decision_date': '2026-06-10', 'legal_force_date': '2026-07-24'}
           assert report['legal_correctness_certified'] is False
-          print('SYNTHETIC_PAIR_VERIFIED; employee-chat and visual acceptance remain separate')
+          print('SYNTHETIC_PAIR_VERIFIED; live-provider acceptance remains separate')
           PY
