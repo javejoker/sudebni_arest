@@ -1,0 +1,65 @@
+name: Verify package
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read exact commit and verify package hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          api = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY']
+          def get(path):
+              req = urllib.request.Request(api + path, headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'sudebni-package-verification'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+          commit = get('/git/commits/' + os.environ['GITHUB_SHA'])
+          tree = get('/git/trees/' + commit['tree']['sha'] + '?recursive=1')
+          assert not tree.get('truncated'), 'Incomplete repository tree'
+          root = pathlib.Path('checked-package')
+          root.mkdir()
+          for entry in tree['tree']:
+              if entry['type'] != 'blob':
+                  continue
+              path = pathlib.PurePosixPath(entry['path'])
+              assert not path.is_absolute() and '..' not in path.parts
+              assert entry['mode'] == '100644', 'Unsupported file mode'
+              result = get('/git/blobs/' + entry['sha'])
+              data = base64.b64decode(result['content'])
+              actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              assert actual == entry['sha'], str(path)
+              target = root / path
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(data)
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          for item in manifest['entries']:
+              data = (root / item['path']).read_bytes()
+              assert len(data) == item['bytes'], item['path']
+              assert hashlib.sha256(data).hexdigest() == item['sha256'], item['path']
+          print('MANIFEST_VERIFIED', len(manifest['entries']), 'files', os.environ['GITHUB_SHA'])
+          PY
+      - name: Run 32 regression tests
+        working-directory: checked-package
+        run: python3 -m unittest discover -s tests -v
+      - name: Generate both documents from synthetic data only
+        working-directory: checked-package
+        run: |
+          python3 scripts/fill_documents.py --data tests/synthetic_case.json --out out_ci
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          out = Path('out_ci')
+          report = json.loads((out / 'validation.json').read_text(encoding='utf-8'))
+          assert len(list(out.glob('*.docx'))) == 2
+          assert report['status'] == 'FILLED_REQUIRES_FINAL_REVIEW'
+          assert report['legal_correctness_certified'] is False
+          print('SYNTHETIC_PAIR_VERIFIED; employee-chat and visual acceptance remain separate')
+          PY

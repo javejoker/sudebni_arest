@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "created": "2026-09-22",
+  "entries": [
+    {
+      "path": ".github/workflows/verify.yml",
+      "bytes": 3161,
+      "sha256": "acfd61d1e53b6834620c384dd78d0ff82014a97d87e1693aaff201f6cfd65198"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 108,
+      "sha256": "d8857f7a0120ea6441b6669faa875d6b597ea0597799782edd23cf8c62d9046c"
+    },
+    {
+      "path": "CODEX_TASK.md",
+      "bytes": 4463,
+      "sha256": "03e57a884bc9d594c03fc895d59858790c078220e723a5114f9805985cdb3740"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6765,
+      "sha256": "abdfff50f6bbad90d8dd184e1bed5e39c09d8d939437a93cb6360f9240cc39a1"
+    },
+    {
+      "path": "SKILL.md",
+      "bytes": 18527,
+      "sha256": "7e3e1bfca7759b6eae3a345eafc5632f869dfbaa997c12008aaa47c484c4bc60"
+    },
+    {
+      "path": "case_schema.json",
+      "bytes": 5949,
+      "sha256": "b06be631adc2f61170938b84435eb979780bc76b416d825501e637f7d340fd38"
+    },
+    {
+      "path": "docs/QA_REPORT.md",
+      "bytes": 6904,
+      "sha256": "376cd22d1c5990a8460b25ba7776327561d90db50300d54cd51086cdd9ff0c0b"
+    },
+    {
+      "path": "docs/TEMPLATE_REVIEW.md",
+      "bytes": 6389,
+      "sha256": "eaee1e7b9092562f2ec2a28eabdc0875d17a280567263d73f37f864aea48efa9"
+    },
+    {
+      "path": "field_map.json",
+      "bytes": 8979,
+      "sha256": "48405bf4780df544618cbd2afb081a0a69813694d9fa29c1a9a115369cfd42d3"
+    },
+    {
+      "path": "scripts/fill_documents.py",
+      "bytes": 15594,
+      "sha256": "7b8a7866673afaffd3967cf35e3d0878590737041042da26e351ae90dbd77bcc"
+    },
+    {
+      "path": "templates/application_cancel_decision.docx",
+      "bytes": 20265,
+      "sha256": "0fd6b78c72c8c123b418bd191e3b1cbbfdc33b48e01fbc12a84813e0c43272a6"
+    },
+    {
+      "path": "templates/motion_restore_term.docx",
+      "bytes": 18047,
+      "sha256": "5ec8add42dc52eab9e0319764efb481fcd84a6d922ca3541a86731cc6960e91d"
+    },
+    {
+      "path": "tests/synthetic_case.json",
+      "bytes": 4793,
+      "sha256": "1aab50a3e4185671fb1c80ad63457204060dd69cc597616e00970aedcc827a9b"
+    },
+    {
+      "path": "tests/test_filler.py",
+      "bytes": 12430,
+      "sha256": "f48a4ddc5d2fe924de5c8089ff576c0edb4d850441d8520d0d02ade3a51b3743"
+    }
+  ]
+}
